@@ -1,0 +1,4 @@
+Scratch space. This folder is gitignored except for this marker file, which
+exists only so the folder survives a fresh clone. Ticket files (itemNN.md),
+their living documents, and .tmp/attic/ live here — nothing in here is history;
+work belongs in git, the todo list, or out of the way.
