@@ -53,12 +53,14 @@ not, the plugin is not loaded.
 
 ## Scratch convention
 
-v0.0.2+: ticket files (`itemNN.md`) and their living documents are written
-through the `todo_ng` custom tool into a durable SQLite sidecar at
-`${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/todo_ng.db` (global autoincrement
-ids; `md_path` points at the living doc the tool writes). See the skill's
-setup step for the opencode.jsonc permission whitelist. The old repo
-`.tmp/` convention below is retained only for cancelled-attempt files
-(`.tmp/attic/`); `.tmp/*` is gitignored; `.tmp/keep` keeps the folder in
-git. Nothing in scratch is history: work belongs in git, in the todo
-list, or moved out of the way.
+v0.0.3+: the sidecar is NOT a todo list — the built-in `todowrite` list is
+the hot, ordered set. The sidecar (`task_sidecar` custom tool) is COLD
+storage: task detail (living md docs) plus the GLOBAL SEQUENCER (its
+autoincrement id is the only global task number). DB at
+`${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/task_sidecar_store.db`. Access
+pattern: insert one row, read one row, lazy soft delete — nothing is ever
+hard-deleted. See the skill's setup step for the opencode.jsonc permission
+whitelist and the call sequence. The old repo `.tmp/` convention below is
+retained only for cancelled-attempt files (`.tmp/attic/`); `.tmp/*` is
+gitignored; `.tmp/keep` keeps the folder in git. Nothing in scratch is
+history: work belongs in git, in the todo list, or moved out of the way.

@@ -26,14 +26,34 @@ governs list mechanics and this skill governs process.
    `"plugin": ["./plugin/todo-protocol.ts"]` to
    `~/.config/opencode/opencode.json(c)` (ask before modifying the user's
    config), and restart opencode.
-2. **Durable store (todo_ng, v0.0.2+).** Tickets and living documents are
-   written through the companion `todo_ng` custom tool (plugin
-   `plugin/todo-ng.ts`), backed by a SQLite sidecar DB at
-   `${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/todo_ng.db` — a global
-   autoincrement counter with the todo line, date, status and the `md_path`
-   of the item's living document. The tool writes the living doc file itself.
-   This replaces the old repo `.tmp/` scratch folder: a `.tmp` clear-down can
-   no longer lose plans or specs, and ids survive across sessions and repos.
+2. **Cold task store (task_sidecar, v0.0.3+).** The sidecar is NOT the todo
+   list — the built-in `todowrite` list is the hot, ordered set. The sidecar
+   (`plugin/task-sidecar.ts`) is cold blob storage for task detail (the
+   living md documents) plus the GLOBAL SEQUENCER: its autoincrement id is
+   the only global task number. DB at
+   `${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/task_sidecar_store.db`.
+   **Never read the DB directly** — use the tool; its help spells out the
+   rules and example call sequences.
+   Call sequence for each task:
+   - `task_sidecar add` (one-line blob) → returns the permanent id **N**
+   - `todowrite`: description of that item starts with **"N: ..."** (the id
+     is the item number; the id is creation sequence, not order — ordering
+     lives in the built-in list and can be reordered there)
+   - `task_sidecar link_md id=N md_path=<path> md_content=<fat record>` —
+     the ticket is the item's living document: full spec, decisions,
+     amendments. Amend by calling `link_md` again; never stuff prose into
+     the todo line.
+   - superseded work: `task_sidecar update id=N status=completed|cancelled`
+     — the record is NEVER deleted (lazy soft delete only;
+     `purge_older_than` / `list_since(show_deleted)` are the maintenance
+     and recovery views).
+   - **Recovery after a crashed session:** `task_sidecar list` shows what
+     was pending/in_progress vs completed — rebuild your built-in todo
+     list from that.
+   This replaces the old repo `.tmp/` scratch folder: a `.tmp` clear-down
+   can no longer lose plans or specs, and ids survive across sessions and
+   repos. Migration from v0.0.2 `todo_ng.db` is automatic (legacy file is
+   left in place).
    **Setup/whitelist:** the store deliberately lives OUTSIDE the opencode
    data dirs (harnesses block or sweep paths that look like the opencode
    folder). Ask the user for permission, then add to
@@ -41,7 +61,7 @@ governs list mechanics and this skill governs process.
    ```jsonc
    "permission": {
      "edit": { "~/.vps-grapevine/**": "allow" },
-     "bash": { "*todo-ng-store*": "allow" }
+     "bash": { "*task-sidecar-store*": "allow" }
    }
    ```
    and create the folder once: `mkdir -p ~/.vps-grapevine`.
