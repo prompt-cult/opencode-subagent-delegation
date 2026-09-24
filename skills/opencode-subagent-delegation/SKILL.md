@@ -26,23 +26,38 @@ governs list mechanics and this skill governs process.
    `"plugin": ["./plugin/todo-protocol.ts"]` to
    `~/.config/opencode/opencode.json(c)` (ask before modifying the user's
    config), and restart opencode.
-2. **Scratch folder.** Tickets and living documents live inside the working
-   repository under `.tmp/` so they survive compaction and no plan or spec ever
-   needs a write outside the repo root. If the working repository has no
-   `.tmp/` folder (look for `.tmp/keep`), ask the user for permission, then
-   create it with a `keep` marker and add to the repo's `.gitignore`:
-   `.tmp/*` and `!.tmp/keep`.
+2. **Durable store (todo_ng, v0.0.2+).** Tickets and living documents are
+   written through the companion `todo_ng` custom tool (plugin
+   `plugin/todo-ng.ts`), backed by a SQLite sidecar DB at
+   `${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/todo_ng.db` — a global
+   autoincrement counter with the todo line, date, status and the `md_path`
+   of the item's living document. The tool writes the living doc file itself.
+   This replaces the old repo `.tmp/` scratch folder: a `.tmp` clear-down can
+   no longer lose plans or specs, and ids survive across sessions and repos.
+   **Setup/whitelist:** the store deliberately lives OUTSIDE the opencode
+   data dirs (harnesses block or sweep paths that look like the opencode
+   folder). Ask the user for permission, then add to
+   `~/.config/opencode/opencode.jsonc`:
+   ```jsonc
+   "permission": {
+     "edit": { "~/.vps-grapevine/**": "allow" },
+     "bash": { "*todo-ng-store*": "allow" }
+   }
+   ```
+   and create the folder once: `mkdir -p ~/.vps-grapevine`.
 
 ## Process
 
-1. **Break the plan into items.** Decompose the user's plan into todo items and
-   write one ticket file per item into the scratch folder: `item00.md`,
-   `item01.md`, … The ticket file is the item's living document — the fat
-   record: full spec, decisions, amendments. Number the todo items to match the
-   ticket files: the todo `content` starts with the same slug as its file
-   (`item00`). Dewey-decimal insertion files new items between existing ones
-   (`item05.5` between `item05` and `item06`); write `item05.5.md` and never
-   renumber existing files or items.
+1. **Break the plan into items.** Decompose the user's plan into todo items.
+   For each item, call the `todo_ng` tool with `add` (the todo line starting
+   with its slug, `item00: …`) and then `link_md` to write the item's ticket
+   file (`item00.md`, …) — the ticket is the item's living document, the fat
+   record: full spec, decisions, amendments. Use the id returned by `add` as
+   the durable handle. Number the todo items to match the ticket files: the
+   session-todo `content` starts with the same slug as its file (`item00`).
+   Dewey-decimal insertion files new items between existing ones (`item05.5`
+   between `item05` and `item06`); write `item05.5.md` and never renumber
+   existing files or items.
 2. Follow the `todowrite` tool description for every list write: construct the
    whole list, flush once, batch status changes at natural boundaries.
 3. Launch one agent per ticket. The agent must:
