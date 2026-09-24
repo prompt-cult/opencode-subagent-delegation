@@ -53,8 +53,12 @@ not, the plugin is not loaded.
 
 ## Scratch convention
 
-`.tmp/` in each working repository is the scratch space: ticket files
-(`itemNN.md`), their living documents, and `.tmp/attic/` for files produced by
-cancelled attempts. `.tmp/*` is gitignored; `.tmp/keep` keeps the folder in
-git. The skill asks permission before creating it. Nothing in scratch is
-history: work belongs in git, in the todo list, or moved out of the way.
+v0.0.2+: ticket files (`itemNN.md`) and their living documents are written
+through the `todo_ng` custom tool into a durable SQLite sidecar at
+`${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/todo_ng.db` (global autoincrement
+ids; `md_path` points at the living doc the tool writes). See the skill's
+setup step for the opencode.jsonc permission whitelist. The old repo
+`.tmp/` convention below is retained only for cancelled-attempt files
+(`.tmp/attic/`); `.tmp/*` is gitignored; `.tmp/keep` keeps the folder in
+git. Nothing in scratch is history: work belongs in git, in the todo
+list, or moved out of the way.
