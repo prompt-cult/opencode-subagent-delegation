@@ -1,6 +1,6 @@
 ---
 name: opencode-subagent-delegation
-description: Use when working through a multi-item todo list of non-trivial engineering tasks — delegate each major item to a subagent with a written spec file, keep the orchestrator context lean, and gate commits on verified-green work with a wip prefix until the feature set is complete.
+description: Use when working through a multi-item todo list of non-trivial engineering tasks — delegate each major item to a subagent whose full instructions live in the task_sidecar DB (passed by ID, never by disk path), keep the orchestrator context lean, and gate commits on verified-green work with a wip prefix until the feature set is complete.
 ---
 
 # Subagent Delegation Process
@@ -12,9 +12,9 @@ Major todo items are delegated to subagents to keep the orchestrator's context l
 The companion `todo-protocol` plugin owns the todo LIST mechanics — the flush
 protocol, slug numbering, deque semantics, statuses, footer items — via the
 rewritten `todowrite` tool description. This skill owns the WORKFLOW: turning a
-plan into numbered ticket files, delegating each ticket to a subagent, and
-gating commits on verified-green work. Where both speak, the tool description
-governs list mechanics and this skill governs process.
+plan into numbered tickets in the sidecar DB, delegating each ticket by its DB
+id, and gating commits on verified-green work. Where both speak, the tool
+description governs list mechanics and this skill governs process.
 
 ## Setup (once per environment, with the user's permission)
 
@@ -26,7 +26,7 @@ governs list mechanics and this skill governs process.
    `"plugin": ["./plugin/todo-protocol.ts"]` to
    `~/.config/opencode/opencode.json(c)` (ask before modifying the user's
    config), and restart opencode.
-2. **Cold task store (task_sidecar, v0.0.3+).** The sidecar is NOT the todo
+2. **Cold task store (task_sidecar, v0.0.4+).** The sidecar is NOT the todo
    list — the built-in `todowrite` list is the hot, ordered set. The sidecar
    (`plugin/task-sidecar.ts`) is cold blob storage for task detail (the
    living md documents) plus the GLOBAL SEQUENCER: its autoincrement id is
@@ -39,10 +39,13 @@ governs list mechanics and this skill governs process.
    - `todowrite`: description of that item starts with **"N: ..."** (the id
      is the item number; the id is creation sequence, not order — ordering
      lives in the built-in list and can be reordered there)
-   - `task_sidecar link_md id=N md_path=<path> md_content=<fat record>` —
-     the ticket is the item's living document: full spec, decisions,
+   - `task_sidecar link_md id=N md_content=<fat record>` — the ticket is the
+     item's living document, stored **IN THE DB (*md_content*)**: full spec,
+     the issue details (the issue body, verbatim where it matters), decisions,
      amendments. Amend by calling `link_md` again; never stuff prose into
-     the todo line.
+     the todo line. `md_path` is optional annotation only — the DB is the
+     authoritative record and **no handoff may pass a disk path as the
+     transport**: a `.tmp/` clear-down must not be able to lose a spec.
    - superseded work: `task_sidecar update id=N status=completed|cancelled`
      — the record is NEVER deleted (lazy soft delete only;
      `purge_older_than` / `list_since(show_deleted)` are the maintenance
@@ -69,29 +72,39 @@ governs list mechanics and this skill governs process.
 ## Process
 
 1. **Break the plan into items.** Decompose the user's plan into todo items.
-   For each item, call the `todo_ng` tool with `add` (the todo line starting
-   with its slug, `item00: …`) and then `link_md` to write the item's ticket
-   file (`item00.md`, …) — the ticket is the item's living document, the fat
-   record: full spec, decisions, amendments. Use the id returned by `add` as
-   the durable handle. Number the todo items to match the ticket files: the
-   session-todo `content` starts with the same slug as its file (`item00`).
-   Dewey-decimal insertion files new items between existing ones (`item05.5`
-   between `item05` and `item06`); write `item05.5.md` and never renumber
-   existing files or items.
+   For each item, call `task_sidecar add` (the todo line starting with its
+   task number) and then `link_md id=N md_content=<fat record>` to store the
+   item's ticket IN the DB — the ticket is the item's living document: full
+   spec, issue details, decisions, amendments. The `md_content` must carry
+   everything the agent needs; a `.tmp/` path is an annotation at most and
+   is never the transport. Use the id returned by `add` as the durable
+   handle and as the item number in the todo list.
 2. Follow the `todowrite` tool description for every list write: construct the
    whole list, flush once, batch status changes at natural boundaries.
-3. Launch one agent per ticket. The agent must:
-   - implement the work per the ticket (`itemNN.md`),
+3. Launch one agent per ticket. **The handoff is the DB ID, never a file
+   path.** The launch prompt tells the agent its `task_sidecar get id=N`
+   row IS its full instructions, and the row's `md_content` must be
+   self-contained *before* launch: the issue details (title, body, the
+   definition of done), the spec, the constraints, the ban list, the
+   register rules, the delivery (branch/PR/gates). If the record is thin,
+   amend it with `link_md` FIRST — never launch on a thin record and never
+   paste the spec through the prompt, the path, or `.tmp/`. Each agent must:
+   - call `task_sidecar get id=N` and read `md_content` as its ticket,
+   - implement the work per the ticket,
    - verify its work is green (run the relevant tests/builds),
    - `git add` its changes, but **NEVER `git commit`**.
 4. On the agent's return, it reports whether the work was fully done or lists
    follow-on work. The orchestrator must then:
    - mark the todo item done,
-   - add any follow-on work as new todo items with their own ticket files,
+   - add any follow-on work as new todo items with their own sidecar rows
+     (`add` + `link_md`),
    - review the diff (`git status`, `git diff --cached`),
    - if the code is green with respect to the current tests (the current TDD bar),
      `git commit`. Use the message prefix `"wip: <summary>"` while the full feature
      set is not yet complete; use a normal message once it is.
+   - if the agent amended its own record (decisions taken mid-run), the
+     amendments must land back in the DB via `link_md` before the row is
+     closed, so the record stays complete.
 5. In this manner subagents handle the majority of tool calls, keeping the
    orchestrator's context lean.
 6. **No dangling work, ever.** Before each outer commit the orchestrator must

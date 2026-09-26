@@ -20,24 +20,29 @@ const TASK_SIDECAR_DESCRIPTION = `Cold task-detail store + global sequencer (SQL
 Rules:
 - Access pattern: INSERT one row, READ one row, LAZY SOFT DELETE. Nothing is ever hard-deleted; superseded work is marked completed/cancelled via update.
 - The autoincrement id IS the task number (creation sequence, not order — ordering/reordering lives in the built-in todo list).
+- THE DB IS THE RECORD AND THE TRANSPORT. The fat record (md_content) lives IN the DB, never on disk: a link_md with only md_path writes NOTHING. md_path is an optional annotation, never a handoff mechanism.
 
 Call sequence (allocating a new task):
 1) task_sidecar add (todo = one-line blob) -> returns the permanent id N [the sequencer]
 2) todowrite: insert/update the built-in list with description "N: <task>" — the id is the item number
-3) task_sidecar link_md id=N md_path=<living doc> md_content=<fat record: full spec, decisions, amendments>
+3) task_sidecar link_md id=N md_content=<fat record: full spec, issue details, decisions, amendments> — the record is stored IN the DB; md_path is optional annotation only
+
+Delegation (handing a task to a subagent):
+- Pass the row ID (and the action summary), NOT a file path. The subagent reads its full instructions via task_sidecar get id=N — the record must be self-contained (include the issue details, the spec, the constraints, the do-not list).
+- NEVER pass a .tmp/ or disk path as the spec transport; a .tmp clear-down must not be able to lose a spec.
 
 Later:
 - task_sidecar update id=N status=completed|cancelled (keeps the record)
-- task_sidecar link_md again to amend the living doc
+- task_sidecar link_md id=N md_content=<amended record> to amend the living doc
 
 Recovery (crashed session): task_sidecar list, see what is pending/in_progress vs completed, rebuild your built-in todo list from that.
 
 Actions:
 - add: new row (todo required; optional status/priority). Returns the permanent id.
 - list: rows (optional status/session_id filter; show_deleted to include soft-deleted), ascending by id.
-- get: one row by id (skips soft-deleted; show_deleted includes).
+- get: one row by id (skips soft-deleted; show_deleted includes). Returns the row INCLUDING md_content — this is how a subagent reads its full instructions.
 - update: patch status/priority/todo by id. cancelled keeps the record.
-- link_md: write the task's living document (md_path + md_content) and record the path on the row.
+- link_md: store the task's living document IN the DB (md_content required; md_path optional annotation). Never rely on the path.
 - purge_older_than: LAZY soft delete all rows created before 'before' (ISO ts). Returns the count.
 - list_since: rows created at/after 'since' (ISO ts), ascending, respecting soft delete; show_deleted includes them.
 The fat record for a task is its living document; write/amend it via link_md, not by stuffing prose into the todo text.`
@@ -55,8 +60,8 @@ export default (async () => ({
         status: tool.schema.string().optional().describe("pending | in_progress | completed | cancelled"),
         priority: tool.schema.string().optional().describe("high | medium | low"),
         session_id: tool.schema.string().optional().describe("opencode session id (optional)"),
-        md_path: tool.schema.string().optional().describe("living doc path (link_md)"),
-        md_content: tool.schema.string().optional().describe("living doc content (link_md)"),
+        md_path: tool.schema.string().optional().describe("OPTIONAL annotation only — the record lives in the DB; never a handoff path (link_md)"),
+        md_content: tool.schema.string().optional().describe("living doc content, stored IN the DB (link_md, required)"),
         before: tool.schema.string().optional().describe("ISO ts — purge_older_than soft-deletes rows created before this"),
         since: tool.schema.string().optional().describe("ISO ts — list_since returns rows created at/after this"),
         show_deleted: tool.schema.boolean().optional().describe("include soft-deleted rows (list/get/list_since)"),
@@ -103,9 +108,9 @@ export default (async () => ({
               return JSON.stringify(row, null, 2)
             }
             case "link_md": {
-              if (args.id === undefined || !args.md_path || args.md_content === undefined)
-                throw new Error("link_md requires 'id', 'md_path' and 'md_content'")
-              const row = s.linkMd(args.id, args.md_path, args.md_content)
+              if (args.id === undefined || args.md_content === undefined)
+                throw new Error("link_md requires 'id' and 'md_content' (the record lives IN the DB; md_path is optional annotation)")
+              const row = s.linkMd(args.id, args.md_content, args.md_path)
               if (!row) throw new Error(`no task_sidecar row with id ${args.id}`)
               return JSON.stringify(row, null, 2)
             }

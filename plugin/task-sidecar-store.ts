@@ -6,8 +6,12 @@
 // soft delete — rows are never hard-deleted. Framework-free (bun:sqlite +
 // node:fs) so it can be unit-tested with bun:test without loading opencode.
 // The plugin wrapper in task-sidecar.ts is the only consumer.
+//
+// v0.0.4: the fat record's CONTENT lives IN the DB (md_content column).
+// md_path is a legacy/annotation field only — the DB is the authoritative
+// record and no handoff may pass a disk path as the transport.
 import { Database } from "bun:sqlite"
-import { mkdirSync, writeFileSync, existsSync } from "node:fs"
+import { mkdirSync, readFileSync, existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 
@@ -20,6 +24,7 @@ export interface TaskSidecarRow {
   priority: string
   session_id: string | null
   md_path: string | null
+  md_content: string | null
   deleted: number
 }
 
@@ -74,9 +79,29 @@ export class TaskSidecarStore {
         priority TEXT NOT NULL DEFAULT 'medium',
         session_id TEXT,
         md_path TEXT,
+        md_content TEXT,
         deleted INTEGER NOT NULL DEFAULT 0
       );
     `)
+    // v0.0.3 → v0.0.4 migration: add the md_content column to an existing
+    // store, backfilling from md_path files so the DB becomes authoritative.
+    const cols = (this.db.query(`PRAGMA table_info(task_sidecar)`).all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    )
+    if (!cols.includes("md_content")) {
+      this.db.exec("ALTER TABLE task_sidecar ADD COLUMN md_content TEXT")
+      const legacy = this.db
+        .query("SELECT id, md_path FROM task_sidecar WHERE md_content IS NULL AND md_path IS NOT NULL")
+        .all() as Array<{ id: number; md_path: string }>
+      for (const row of legacy) {
+        try {
+          const content = readFileSync(row.md_path, "utf8")
+          this.db.run("UPDATE task_sidecar SET md_content = ? WHERE id = ?", [content, row.id])
+        } catch {
+          // file gone: leave md_content NULL; the row keeps md_path as the hint
+        }
+      }
+    }
     if (isFresh) this.migrateLegacy()
   }
 
@@ -193,14 +218,16 @@ export class TaskSidecarStore {
     return this.get(id)
   }
 
-  // linkMd writes the item's living document to mdPath and records the path.
-  // The file content is passed in so the store stays the single writer.
-  linkMd(id: number, mdPath: string, content: string): TaskSidecarRow | undefined {
-    mkdirSync(dirname(mdPath), { recursive: true })
-    writeFileSync(mdPath, content)
-    const updated = this.update(id, {})
-    this.db.run("UPDATE task_sidecar SET md_path = ?, updated_at = ? WHERE id = ?", [
-      mdPath,
+  // linkMd stores the item's living document IN the DB (md_content) — the
+  // record is the store, not a disk file. md_path may be supplied as an
+  // optional annotation (e.g. a mirror path the user asked for); it is never
+  // the transport: handoffs pass the row id and read md_content via get.
+  linkMd(id: number, content: string, mdPath?: string): TaskSidecarRow | undefined {
+    const current = this.get(id)
+    if (!current) return undefined
+    this.db.run("UPDATE task_sidecar SET md_content = ?, md_path = ?, updated_at = ? WHERE id = ?", [
+      content,
+      mdPath ?? current.md_path,
       this.now(),
       id,
     ])

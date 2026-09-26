@@ -2,7 +2,7 @@
 // sequencer ids, soft delete (never hard-delete), purge/list_since, and
 // migration from the legacy v0.0.2 todo_ng.db.
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Database } from "bun:sqlite"
@@ -65,13 +65,25 @@ describe("TaskSidecarStore", () => {
     s.close()
   })
 
-  test("linkMd writes the living doc and records md_path", () => {
+  test("linkMd stores the record IN the DB; content round-trips via get with no file on disk", () => {
+    const s = new TaskSidecarStore()
+    const r = s.add({ todo: "spec" })
+    const out = s.linkMd(r.id, "# spec body\n\nincluding the issue details")
+    expect(out!.md_content).toBe("# spec body\n\nincluding the issue details")
+    expect(s.get(r.id)!.md_content).toBe("# spec body\n\nincluding the issue details")
+    // md_path is optional annotation; nothing is written to disk
+    expect(out!.md_path).toBeNull()
+    s.close()
+  })
+
+  test("linkMd accepts md_path as annotation only and never writes it", () => {
     const s = new TaskSidecarStore()
     const r = s.add({ todo: "spec" })
     const p = join(home, "tickets", "spec.md")
-    const out = s.linkMd(r.id, p, "# spec")
+    const out = s.linkMd(r.id, "# content", p)
     expect(out!.md_path).toBe(p)
-    expect(s.get(r.id)!.md_path).toBe(p)
+    expect(out!.md_content).toBe("# content")
+    expect(existsSync(p)).toBe(false)
     s.close()
   })
 
@@ -138,6 +150,35 @@ describe("TaskSidecarStore", () => {
     expect(s.add({ todo: "next" }).id).toBe(2)
     // legacy file still on disk
     expect(new Database(legacyPath).query("SELECT COUNT(*) AS n FROM todo_ng").get()).toEqual({ n: 1 })
+    s.close()
+  })
+
+  test("v0.0.3 store (disk-only records) migrates: md_content column added and backfilled from md_path files", () => {
+    // build an OLD-schema DB by hand, the way v0.0.3 left it
+    const dbPath = join(home, "task_sidecar_store.db")
+    const old = new Database(dbPath)
+    old.exec(`CREATE TABLE task_sidecar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        todo TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+        priority TEXT NOT NULL DEFAULT 'medium',
+        session_id TEXT, md_path TEXT,
+        deleted INTEGER NOT NULL DEFAULT 0);`)
+    old.run(
+      "INSERT INTO task_sidecar (created_at, updated_at, todo, status, md_path) VALUES ('2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','disk ticket','pending', ?)",
+      [join(home, "tickets", "old-spec.md")],
+    )
+    old.close()
+    mkdirSync(join(home, "tickets"), { recursive: true })
+    writeFileSync(join(home, "tickets", "old-spec.md"), "# the old fat record")
+
+    // opening with the new store migrates: column added, content backfilled
+    const s = new TaskSidecarStore(dbPath)
+    const row = s.get(1)!
+    expect(row.md_content).toBe("# the old fat record")
+    // and a missing file leaves the row intact with NULL content
+    s.linkMd(1, "# amended in place")
+    expect(s.get(1)!.md_content).toBe("# amended in place")
     s.close()
   })
 })
