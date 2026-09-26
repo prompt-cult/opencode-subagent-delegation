@@ -181,4 +181,55 @@ describe("TaskSidecarStore", () => {
     expect(s.get(1)!.md_content).toBe("# amended in place")
     s.close()
   })
+
+  test("syncStatuses mirrors flushed todo item statuses onto 'N:' rows (closing the todo closes the row)", () => {
+    const s = new TaskSidecarStore()
+    const a = s.add({ todo: "delegated work" })
+    const b = s.add({ todo: "other work" })
+    const changed = s.syncStatuses([
+      { content: `${a.id}: delegated work`, status: "completed" },
+      { content: `${b.id}. other work`, status: "in_progress" },
+    ])
+    expect(changed).toEqual([a.id, b.id])
+    expect(s.get(a.id)!.status).toBe("completed")
+    expect(s.get(b.id)!.status).toBe("in_progress")
+    s.close()
+  })
+
+  test("syncStatuses touches only referenced rows and ignores junk", () => {
+    const s = new TaskSidecarStore()
+    const a = s.add({ todo: "referenced" })
+    const b = s.add({ todo: "parked, not in the flush" })
+    s.update(b.id, { status: "in_progress" })
+    const changed = s.syncStatuses([
+      { content: `${a.id}: referenced`, status: "completed" },
+      // no "N:" prefix: slug-style items carry no sidecar id
+      { content: "item03: legacy slug style", status: "completed" },
+      // unknown id: silently ignored
+      { content: "999: no such row", status: "completed" },
+      // invalid status: ignored
+      { content: `${a.id}: referenced`, status: "archived" },
+      // malformed entries: ignored, never throw
+      null as never,
+      {},
+    ])
+    expect(changed).toEqual([a.id])
+    expect(s.get(a.id)!.status).toBe("completed")
+    // unreferenced row untouched
+    expect(s.get(b.id)!.status).toBe("in_progress")
+    // flushing the same status again changes nothing
+    expect(s.syncStatuses([{ content: `${a.id}: referenced`, status: "completed" }])).toEqual([])
+    s.close()
+  })
+
+  test("syncStatuses never resurrects soft-deleted rows", () => {
+    const s = new TaskSidecarStore()
+    const a = s.add({ todo: "already closed" })
+    s.update(a.id, { status: "cancelled" })
+    const changed = s.syncStatuses([{ content: `${a.id}: already closed`, status: "completed" }])
+    expect(changed).toEqual([a.id])
+    expect(s.get(a.id)!.status).toBe("completed")
+    expect(s.get(a.id)!.deleted).toBe(0)
+    s.close()
+  })
 })

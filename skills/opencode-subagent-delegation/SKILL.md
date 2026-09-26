@@ -46,10 +46,15 @@ description governs list mechanics and this skill governs process.
      the todo line. `md_path` is optional annotation only — the DB is the
      authoritative record and **no handoff may pass a disk path as the
      transport**: a `.tmp/` clear-down must not be able to lose a spec.
-   - superseded work: `task_sidecar update id=N status=completed|cancelled`
-     — the record is NEVER deleted (lazy soft delete only;
-     `purge_older_than` / `list_since(show_deleted)` are the maintenance
-     and recovery views).
+   - closing work: **closing the todo item closes its row automatically** —
+     the plugin mirrors every `todowrite` flush onto the sidecar (an item
+     whose content starts with `N:` writes its status to row N; `completed`
+     closes it, `cancelled` soft-closes it). Do NOT call `task_sidecar
+     update` for rows in the built-in list — the flush already did it.
+     `task_sidecar update id=N status=completed|cancelled` is only for rows
+     NOT in the built-in list (parked, other sessions). The record is NEVER
+     deleted (lazy soft delete only; `purge_older_than` /
+     `list_since(show_deleted)` are the maintenance and recovery views).
    - **Recovery after a crashed session:** `task_sidecar list` shows what
      was pending/in_progress vs completed — rebuild your built-in todo
      list from that.
@@ -81,6 +86,11 @@ description governs list mechanics and this skill governs process.
    handle and as the item number in the todo list.
 2. Follow the `todowrite` tool description for every list write: construct the
    whole list, flush once, batch status changes at natural boundaries.
+   **Standing rule:** any NEW ask goes to the END of the list as (a) a spec
+   into the sidecar (`add` + `link_md`), (b) a todo item carrying that id;
+   front-jump only when the user says do it next / do it now. Follow-ons
+   discovered during a task are appended at the bottom, never folded into
+   live items; discovered constraints ("do not do X") become footer items.
 3. Launch one agent per ticket. **The handoff is the DB ID, never a file
    path.** The launch prompt tells the agent its `task_sidecar get id=N`
    row IS its full instructions, and the row's `md_content` must be
@@ -95,7 +105,9 @@ description governs list mechanics and this skill governs process.
    - `git add` its changes, but **NEVER `git commit`**.
 4. On the agent's return, it reports whether the work was fully done or lists
    follow-on work. The orchestrator must then:
-   - mark the todo item done,
+    - mark the todo item done — that flush closes the matching sidecar row
+      automatically (the plugin mirrors item statuses onto rows), so never
+      follow it with a manual `task_sidecar update`,
    - add any follow-on work as new todo items with their own sidecar rows
      (`add` + `link_md`),
    - review the diff (`git status`, `git diff --cached`),

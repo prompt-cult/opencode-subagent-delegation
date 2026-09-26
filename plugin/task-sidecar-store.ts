@@ -246,6 +246,28 @@ export class TaskSidecarStore {
       .changes
   }
 
+  // syncStatuses MIRRORS the built-in todo list onto the sidecar rows:
+  // every todo item whose content starts with "N:" (or "N.") carries the
+  // global sidecar id N, and the item's status is written to row N. Called
+  // mechanically on every todowrite flush (see task-sidecar.ts), so closing
+  // a todo item IS closing its row — the model cannot forget. Rows not
+  // referenced by the flush (parked, other sessions) are never touched.
+  // Returns the ids whose status changed.
+  syncStatuses(items: Array<{ content?: unknown; status?: unknown }>): number[] {
+    const changed: number[] = []
+    for (const item of items) {
+      if (typeof item?.content !== "string" || typeof item?.status !== "string") continue
+      if (!STATUSES.has(item.status)) continue
+      const m = item.content.match(/^\s*(\d+)\s*[.:)\]-]/)
+      if (!m) continue
+      const row = this.get(Number(m[1]))
+      if (!row || row.status === item.status) continue
+      this.update(row.id, { status: item.status })
+      changed.push(row.id)
+    }
+    return changed
+  }
+
   close() {
     this.db.close()
   }

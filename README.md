@@ -59,7 +59,16 @@ storage: task detail (living md docs) plus the GLOBAL SEQUENCER (its
 autoincrement id is the only global task number). DB at
 `${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/task_sidecar_store.db`. Access
 pattern: insert one row, read one row, lazy soft delete — nothing is ever
-hard-deleted. See the skill's setup step for the opencode.jsonc permission
+hard-deleted.
+
+v0.0.4: the statuses are MIRRORED, mechanically. The plugin hooks every
+`todowrite` flush: an item whose content starts with `N:` carries the global
+sidecar id, and the flush sets row N's status to the item's status
+(`completed` closes the row, `cancelled` soft-closes it). Models cannot
+forget to close rows — closing the todo item IS closing the row. Rows not
+referenced by the flush (parked, other sessions) are never touched.
+Manual `task_sidecar update status=...` is only for rows outside the
+built-in list. See the skill's setup step for the opencode.jsonc permission
 whitelist and the call sequence. The old repo `.tmp/` convention below is
 retained only for cancelled-attempt files (`.tmp/attic/`); `.tmp/*` is
 gitignored; `.tmp/keep` keeps the folder in git. Nothing in scratch is

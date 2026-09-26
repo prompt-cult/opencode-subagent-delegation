@@ -32,7 +32,8 @@ Delegation (handing a task to a subagent):
 - NEVER pass a .tmp/ or disk path as the spec transport; a .tmp clear-down must not be able to lose a spec.
 
 Later:
-- task_sidecar update id=N status=completed|cancelled (keeps the record)
+- closing a todo item CLOSES its row automatically: the plugin mirrors every todowrite flush onto the sidecar — an item "N: …" flushed completed/cancelled sets row N to completed/cancelled. Do not call update for that; it already happened.
+- task_sidecar update id=N status=completed|cancelled is only for rows NOT in the built-in todo list (parked, other sessions).
 - task_sidecar link_md id=N md_content=<amended record> to amend the living doc
 
 Recovery (crashed session): task_sidecar list, see what is pending/in_progress vs completed, rebuild your built-in todo list from that.
@@ -48,6 +49,21 @@ Actions:
 The fat record for a task is its living document; write/amend it via link_md, not by stuffing prose into the todo text.`
 
 export default (async () => ({
+  // Every todowrite flush mechanically mirrors item statuses onto the
+  // sidecar rows: an item "N: …" carries the global id N, and its status
+  // (pending/in_progress/completed/cancelled) is written to row N. Closing
+  // the todo item IS closing the row — no model memory involved. Never let
+  // a sync failure break the flush.
+  "tool.execute.before": async (input: { tool: string }, output: { args: any }) => {
+    if (input.tool !== "todowrite") return
+    try {
+      const args = output.args
+      const todos = Array.isArray(args) ? args : Array.isArray(args?.todos) ? args.todos : []
+      if (todos.length) getStore().syncStatuses(todos)
+    } catch {
+      // the cold store must never break the hot list's flush
+    }
+  },
   tool: {
     task_sidecar: tool({
       description: TASK_SIDECAR_DESCRIPTION,
