@@ -83,7 +83,10 @@ description governs list mechanics and this skill governs process.
    spec, issue details, decisions, amendments. The `md_content` must carry
    everything the agent needs; a `.tmp/` path is an annotation at most and
    is never the transport. Use the id returned by `add` as the durable
-   handle and as the item number in the todo list.
+   handle and as the item number in the todo list. If the ask traces to a
+   gh issue or other ticket, the TODO LINE NAMES IT (e.g.
+   `N: fix quorum resend (#123)`) and the record carries the ticket id
+   verbatim — an item with a ticket behind it must never read as ticketless.
 2. Follow the `todowrite` tool description for every list write: construct the
    whole list, flush once, batch status changes at natural boundaries.
    **Standing rule:** any NEW ask goes to the END of the list as (a) a spec
@@ -96,7 +99,12 @@ description governs list mechanics and this skill governs process.
    row IS its full instructions, and the row's `md_content` must be
    self-contained *before* launch: the issue details (title, body, the
    definition of done), the spec, the constraints, the ban list, the
-   register rules, the delivery (branch/PR/gates). If the record is thin,
+   register rules, the delivery. The delivery names the **PRE-ASSIGNED
+   branch**: the orchestrator names the branch BEFORE launch and records it
+   in the record, so every attempt and every follow-on for this task lands
+   on the same branch — an agent never invents a branch name, and the
+   branch name is findable from the sidecar row alone. The delivery also
+   states the PR and merge gates. If the record is thin,
    amend it with `link_md` FIRST — never launch on a thin record and never
    paste the spec through the prompt, the path, or `.tmp/`. Each agent must:
    - call `task_sidecar get id=N` and read `md_content` as its ticket,

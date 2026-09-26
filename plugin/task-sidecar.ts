@@ -28,7 +28,8 @@ Call sequence (allocating a new task):
 3) task_sidecar link_md id=N md_content=<fat record: full spec, issue details, decisions, amendments> — the record is stored IN the DB; md_path is optional annotation only
 
 Delegation (handing a task to a subagent):
-- Pass the row ID (and the action summary), NOT a file path. The subagent reads its full instructions via task_sidecar get id=N — the record must be self-contained (include the issue details, the spec, the constraints, the do-not list).
+- Pass the row ID (and the action summary), NOT a file path. The subagent reads its full instructions via task_sidecar get id=N — the record must be self-contained (include the issue details, the spec, the constraints, the do-not list, and the PRE-ASSIGNED branch name: the orchestrator names the branch before launch and records it IN the row, so every attempt for this task lands on the same branch).
+- If the task traces to a gh issue or other ticket, the todo line and the record both NAME the ticket (e.g. #123) — never ticketless.
 - NEVER pass a .tmp/ or disk path as the spec transport; a .tmp clear-down must not be able to lose a spec.
 
 Later:
