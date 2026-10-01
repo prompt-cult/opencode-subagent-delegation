@@ -45,8 +45,11 @@ description governs list mechanics and this skill governs process.
    other rollouts — and can filter by `rollout_id`.
    **Legacy rows carry `rollout_id` `"0"`.** That is a marker for
    pre-namespacing rows, not an identity. NEVER pass `"0"` as your own uuid and
-   never get into the habit of naming the sentinel: go in and set the correct
-   uuid for the rows you own.
+   never get into the habit of naming the sentinel: a legacy row that is yours
+   to work is moved into your namespace with `adopt id=N rollout_id=<your
+   uuid>` — one way, and refused for any row that already has a real owner
+   (the error names them). Set the correct uuid for your rows; leave the rest
+   for the operator.
    Call sequence for each task:
    - `task_sidecar add rollout_id=<your uuid> todo=<one-line blob>` (a record
      passed as `md_content=` IS stored on the row — nothing is silently

@@ -182,6 +182,35 @@ describe("TaskSidecarStore", () => {
     })
   })
 
+  describe("adopting legacy rows", () => {
+    test("adopt moves a marker row into the caller's namespace, one way", () => {
+      const s = new TaskSidecarStore()
+      s.db.run("INSERT INTO task_sidecar (created_at, updated_at, todo, status, md_content) VALUES ('2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z','old row','pending','# old record')")
+      const legacy = s.list({ rollout_id: LEGACY_ROLLOUT })[0]
+      expect(legacy.rollout_id).toBe(LEGACY_ROLLOUT)
+
+      const adopted = s.adopt(legacy.id, ROLL_A, ROLL_A)!
+      expect(adopted.rollout_id).toBe(ROLL_A)
+      expect(adopted.last_actor).toBe(ROLL_A)
+      expect(adopted.observed_session).toBe(ROLL_A)
+      // the record survived the transfer and the new owner can now amend it
+      expect(adopted.md_content).toBe("# old record")
+      expect(s.linkMd(legacy.id, "# amended by the new owner", ROLL_A)!.md_content).toBe(
+        "# amended by the new owner",
+      )
+      s.close()
+    })
+
+    test("adopt is refused for a row that already has a real owner, naming them", () => {
+      const s = new TaskSidecarStore()
+      const r = s.add({ todo: "owned", rollout_id: ROLL_A })
+      expect(() => s.adopt(r.id, ROLL_B)).toThrow(new RegExp(`belongs to rollout "${ROLL_A}"`))
+      expect(() => s.adopt(r.id, "")).toThrow(/requires 'rollout_id'/)
+      expect(s.get(r.id)!.rollout_id).toBe(ROLL_A)
+      s.close()
+    })
+  })
+
   test("purgeOlderThan LAZY soft deletes only older rows; nothing hard-deleted", () => {
     const s = new TaskSidecarStore()
     const old = s.add({ todo: "old", rollout_id: ROLL_A })
@@ -297,7 +326,7 @@ describe("TaskSidecarStore", () => {
     expect(rows.map((r) => r.observed_session)).toEqual([null, null])
     // content survived the migration
     expect(rows[0]!.md_content).toBe("# one record")
-    // a legacy row is not adoptable by naming a real uuid: it belongs to the marker
+    // update never transfers ownership: a marker row stays in the marker until adopt
     expect(() => s.update(1, { rollout_id: ROLL_A, status: "completed" })).toThrow(
       new RegExp(`belongs to rollout "${LEGACY_ROLLOUT}"`),
     )

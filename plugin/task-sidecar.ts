@@ -34,7 +34,7 @@ NAMESPACING (mandatory): every row belongs to the rollout that made it.
 - A mutation is refused unless the rollout_id you pass equals the row's owner; the error names the owner. Delegation: a subagent handed a row id amends/reports by passing the OWNER's uuid; last_actor records who really did it.
 - purge_older_than only ever touches your own namespace.
 - Reads (get/list/list_since) are unscoped — auditability means seeing other rollouts — and may filter by rollout_id.
-- Rows created before namespacing carry rollout_id "0". That is a legacy marker, not an identity: NEVER pass "0" as your own uuid. If a legacy row is yours to work, go in and set the real uuid (update rollout_id is not offered — add your own row, or ask the operator).
+- Rows created before namespacing carry rollout_id "0". That is a legacy marker, not an identity: NEVER pass "0" as your own uuid. If a legacy row is yours to work, ADOPT it — adopt id=N rollout_id=<your uuid> — which moves it out of the marker into your namespace, one way. Adoption is refused for any row that already has a real owner (the error names them).
 
 Rules:
 - Access pattern: INSERT one row, READ one row, LAZY SOFT DELETE. Nothing is ever hard-deleted; superseded work is marked completed/cancelled via update.
@@ -63,6 +63,7 @@ Actions:
 - get: one row by id (skips soft-deleted; show_deleted includes). Returns the row INCLUDING md_content — this is how a subagent reads its full instructions.
 - update: patch todo/status/priority by id; refused unless rollout_id owns the row.
 - link_md: store the task's living document IN the DB (md_content required; md_path optional annotation); refused unless rollout_id owns the row.
+- adopt: move a row out of the legacy "0" marker namespace into yours (id + rollout_id required). One-way; refused for any row with a real owner.
 - purge_older_than: LAZY soft delete rows in YOUR namespace created before 'before' (ISO ts). Returns the count.
 - list_since: rows created at/after 'since' (ISO ts), ascending, respecting soft delete; show_deleted includes them.
 The fat record for a task is its living document; write/amend it via link_md, not by stuffing prose into the todo text.`
@@ -91,7 +92,7 @@ export default (async () => ({
       args: {
         action: tool.schema
           .string()
-          .describe("add | list | get | update | link_md | purge_older_than | list_since"),
+          .describe("add | list | get | update | link_md | adopt | purge_older_than | list_since"),
         rollout_id: tool.schema
           .string()
           .optional()
@@ -171,6 +172,13 @@ export default (async () => ({
               if (!row) throw new Error(`no task_sidecar row with id ${args.id}`)
               return JSON.stringify(row, null, 2)
             }
+            case "adopt": {
+              if (args.id === undefined) throw new Error("adopt requires 'id'")
+              if (!args.rollout_id) throw new Error("adopt requires 'rollout_id' (your rollout uuid)")
+              const row = s.adopt(args.id, args.rollout_id, observed ?? null)
+              if (!row) throw new Error(`no task_sidecar row with id ${args.id}`)
+              return JSON.stringify(row, null, 2)
+            }
             case "purge_older_than": {
               if (!args.before) throw new Error("purge_older_than requires 'before' (ISO ts)")
               if (!args.rollout_id) throw new Error("purge_older_than requires 'rollout_id' (your rollout uuid)")
@@ -184,7 +192,7 @@ export default (async () => ({
             }
             default:
               throw new Error(
-                `unknown action "${args.action}" (use add|list|get|update|link_md|purge_older_than|list_since)`,
+                `unknown action "${args.action}" (use add|list|get|update|link_md|adopt|purge_older_than|list_since)`,
               )
           }
         } catch (e) {

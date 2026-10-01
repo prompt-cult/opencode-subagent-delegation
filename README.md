@@ -92,4 +92,6 @@ session's list can never close another's row. The plugin stamps
 the audit trail is ground truth. Reads stay unscoped — auditing other
 rollouts must be possible — and can filter by `rollout_id`. Rows predating
 the namespace carry the `rollout_id` marker `"0"`, which is a marker and not
-an identity: never pass `"0"` as your own uuid.
+an identity: never pass `"0"` as your own uuid. A legacy row is moved into a
+real namespace only by `adopt id=N rollout_id=<your uuid>` — one way, and
+refused for a row that already has an owner.

@@ -292,6 +292,26 @@ export class TaskSidecarStore {
     return this.get(id)
   }
 
+  // adopt moves a row OUT of the legacy marker namespace and INTO the calling
+  // rollout. It is the only ownership transfer the store offers, it applies
+  // only to rows still sitting in the marker, and it is a one-way door: once
+  // adopted, the row belongs to that rollout and no marker-naming caller can
+  // touch it again. Any other source namespace is refused, naming the owner.
+  adopt(id: number, rolloutId: string, actor?: string): TaskSidecarRow | undefined {
+    if (!rolloutId) throw new Error("adopt requires 'rollout_id' (your rollout uuid)")
+    const current = this.get(id)
+    if (!current) return undefined
+    if (current.rollout_id !== LEGACY_ROLLOUT)
+      throw new Error(
+        `adopt refused: row ${id} belongs to rollout "${current.rollout_id}", not the legacy marker "${LEGACY_ROLLOUT}"`,
+      )
+    this.db.run(
+      "UPDATE task_sidecar SET rollout_id = ?, observed_session = COALESCE(observed_session, ?), last_actor = ?, updated_at = ? WHERE id = ?",
+      [rolloutId, actor ?? null, actor ?? null, this.now(), id],
+    )
+    return this.get(id)
+  }
+
   // purgeOlderThan LAZY SOFT DELETES every row in the caller's own namespace
   // created before the ISO ts (one-row-at-a-time semantics, batched). Scoped
   // to rollout_id: no session can soft-delete another namespace's rows, and
