@@ -26,7 +26,7 @@ description governs list mechanics and this skill governs process.
    `"plugin": ["./plugin/todo-protocol.ts"]` to
    `~/.config/opencode/opencode.json(c)` (ask before modifying the user's
    config), and restart opencode.
-2. **Cold task store (task_sidecar, v0.0.4+).** The sidecar is NOT the todo
+2. **Cold task store (task_sidecar, v0.0.6+).** The sidecar is NOT the todo
    list — the built-in `todowrite` list is the hot, ordered set. The sidecar
    (`plugin/task-sidecar.ts`) is cold blob storage for task detail (the
    living md documents) plus the GLOBAL SEQUENCER: its autoincrement id is
@@ -34,12 +34,28 @@ description governs list mechanics and this skill governs process.
    `${VPS_GRAPEVINE_HOME:-~/.vps-grapevine}/task_sidecar_store.db`.
    **Never read the DB directly** — use the tool; its help spells out the
    rules and example call sequences.
+   **Every row belongs to a rollout.** `rollout_id` is REQUIRED on `add`,
+   `update`, `link_md` and `purge_older_than`: pass YOUR OWN rollout uuid (the
+   session id, `ses_…`). `add` returns the handle tuple
+   `{"rollout_id": …, "id": …}` — carry that id everywhere. A mutation outside
+   the owning namespace is refused and the error names the owner; a subagent
+   handed a row id amends/reports by passing the OWNER's uuid (the row records
+   who really acted). `purge_older_than` only ever touches your own namespace.
+   Reads (`get`/`list`/`list_since`) stay unscoped — you must be able to audit
+   other rollouts — and can filter by `rollout_id`.
+   **Legacy rows carry `rollout_id` `"0"`.** That is a marker for
+   pre-namespacing rows, not an identity. NEVER pass `"0"` as your own uuid and
+   never get into the habit of naming the sentinel: go in and set the correct
+   uuid for the rows you own.
    Call sequence for each task:
-   - `task_sidecar add` (one-line blob) → returns the permanent id **N**
+   - `task_sidecar add rollout_id=<your uuid> todo=<one-line blob>` (a record
+     passed as `md_content=` IS stored on the row — nothing is silently
+     dropped) → returns `{"rollout_id", "id"}`; the id is the permanent number
    - `todowrite`: description of that item starts with **"N: ..."** (the id
      is the item number; the id is creation sequence, not order — ordering
      lives in the built-in list and can be reordered there)
-   - `task_sidecar link_md id=N md_content=<fat record>` — the ticket is the
+   - `task_sidecar link_md id=N rollout_id=<owner> md_content=<fat record>` —
+     the ticket is the
      item's living document, stored **IN THE DB (*md_content*)**: full spec,
      the issue details (the issue body, verbatim where it matters), decisions,
      amendments. Amend by calling `link_md` again; never stuff prose into
@@ -49,9 +65,12 @@ description governs list mechanics and this skill governs process.
    - closing work: **closing the todo item closes its row automatically** —
      the plugin mirrors every `todowrite` flush onto the sidecar (an item
      whose content starts with `N:` writes its status to row N; `completed`
-     closes it, `cancelled` soft-closes it). Do NOT call `task_sidecar
+     closes it, `cancelled` soft-closes it) — and the mirror is scoped to the
+     flushing session's own rows, so your list can never close another
+     rollout's row. Do NOT call `task_sidecar
      update` for rows in the built-in list — the flush already did it.
-     `task_sidecar update id=N status=completed|cancelled` is only for rows
+     `task_sidecar update id=N rollout_id=<owner> status=completed|cancelled`
+     is only for rows
      NOT in the built-in list (parked, other sessions). The record is NEVER
      deleted (lazy soft delete only; `purge_older_than` /
      `list_since(show_deleted)` are the maintenance and recovery views).
@@ -77,8 +96,10 @@ description governs list mechanics and this skill governs process.
 ## Process
 
 1. **Break the plan into items.** Decompose the user's plan into todo items.
-   For each item, call `task_sidecar add` (the todo line starting with its
-   task number) and then `link_md id=N md_content=<fat record>` to store the
+   For each item, call `task_sidecar add rollout_id=<your uuid>` (the todo line
+   starting with its
+   task number) and then `link_md id=N rollout_id=<your uuid>
+   md_content=<fat record>` to store the
    item's ticket IN the DB — the ticket is the item's living document: full
    spec, issue details, decisions, amendments. The `md_content` must carry
    everything the agent needs; a `.tmp/` path is an annotation at most and
@@ -107,17 +128,22 @@ description governs list mechanics and this skill governs process.
    states the PR and merge gates. If the record is thin,
    amend it with `link_md` FIRST — never launch on a thin record and never
    paste the spec through the prompt, the path, or `.tmp/`. Each agent must:
-   - call `task_sidecar get id=N` and read `md_content` as its ticket,
-   - implement the work per the ticket,
-   - verify its work is green (run the relevant tests/builds),
-   - `git add` its changes, but **NEVER `git commit`**.
+- call `task_sidecar get id=N` and read `md_content` as its ticket,
+    - implement the work per the ticket,
+    - verify its work is green (run the relevant tests/builds),
+    - report back on the row by naming the OWNER's rollout uuid
+      (`link_md id=N rollout_id=<owner>` to amend the record as it goes) — a
+      foreign namespace is refused, and the row keeps the actor's own session
+      id as the audit trail,
+    - `git add` its changes, but **NEVER `git commit`**.
 4. On the agent's return, it reports whether the work was fully done or lists
    follow-on work. The orchestrator must then:
     - mark the todo item done — that flush closes the matching sidecar row
-      automatically (the plugin mirrors item statuses onto rows), so never
+      automatically (the plugin mirrors item statuses onto rows, scoped to
+      your own rollout's rows), so never
       follow it with a manual `task_sidecar update`,
-   - add any follow-on work as new todo items with their own sidecar rows
-     (`add` + `link_md`),
+    - add any follow-on work as new todo items with their own sidecar rows
+      (`add` + `link_md`, both with your rollout uuid),
    - review the diff (`git status`, `git diff --cached`),
    - if the code is green with respect to the current tests (the current TDD bar),
      `git commit`. Use the message prefix `"wip: <summary>"` while the full feature
